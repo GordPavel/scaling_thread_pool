@@ -18,8 +18,14 @@ import java.util.stream.Stream;
 import static java.lang.String.format;
 import static java.util.Objects.isNull;
 
+/**
+ * Immediately add workers to maximum when submitting new tasks
+ */
 public class ScalingCachingThreadPool extends ThreadPoolExecutor {
 
+    /**
+     * Try to enqueue task if no available workers
+     */
     private static final RejectedExecutionHandler rejectionHandler = (task, executor) -> {
         try {
             if (executor.getQueue().remainingCapacity() <= 0) {
@@ -107,22 +113,9 @@ public class ScalingCachingThreadPool extends ThreadPoolExecutor {
         }
     }
 
-    private static class CombiningRejectionHandler implements RejectedExecutionHandler {
-
-        private final RejectedExecutionHandler[] handlers;
-
-        public CombiningRejectionHandler(RejectedExecutionHandler... handlers) {
-            this.handlers = handlers;
-        }
-
-        @Override
-        public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
-            for (RejectedExecutionHandler handler : handlers) {
-                handler.rejectedExecution(r, executor);
-            }
-        }
-    }
-
+    /**
+     * Facade to user specified blocking queue with only offer method rewritten
+     */
     private static class ScalingBlockingQueueFacade<E> extends AbstractQueue<E> implements BlockingQueue<E>, java.io.Serializable {
 
         private final BlockingQueue<E> delegate;
@@ -130,6 +123,20 @@ public class ScalingCachingThreadPool extends ThreadPoolExecutor {
         public ScalingBlockingQueueFacade(BlockingQueue<E> delegate) {
             this.delegate = delegate;
         }
+
+        /**
+         * Always ask thread pool to create new worker until have remaining capacity
+         */
+        @Override
+        public boolean offer(E e) {
+            if (size() == 0) {
+                return delegate.offer(e);
+            } else {
+                return false;
+            }
+        }
+
+        //----------------- Other methods just call delegate
 
         @Override
         public Iterator<E> iterator() {
@@ -175,15 +182,6 @@ public class ScalingCachingThreadPool extends ThreadPoolExecutor {
         @Override
         public int drainTo(Collection<? super E> c, int maxElements) {
             return delegate.drainTo(c, maxElements);
-        }
-
-        @Override
-        public boolean offer(E e) {
-            if (size() == 0) {
-                return delegate.offer(e);
-            } else {
-                return false;
-            }
         }
 
         @Override
@@ -306,6 +304,25 @@ public class ScalingCachingThreadPool extends ThreadPoolExecutor {
         @Override
         public boolean equals(Object obj) {
             return delegate.equals(obj);
+        }
+    }
+
+    /**
+     * Utility handler class to combine with user specified handlers
+     */
+    private static class CombiningRejectionHandler implements RejectedExecutionHandler {
+
+        private final RejectedExecutionHandler[] handlers;
+
+        public CombiningRejectionHandler(RejectedExecutionHandler... handlers) {
+            this.handlers = handlers;
+        }
+
+        @Override
+        public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
+            for (RejectedExecutionHandler handler : handlers) {
+                handler.rejectedExecution(r, executor);
+            }
         }
     }
 }
